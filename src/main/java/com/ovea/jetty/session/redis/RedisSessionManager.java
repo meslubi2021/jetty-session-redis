@@ -15,22 +15,29 @@
  */
 package com.ovea.jetty.session.redis;
 
-import com.ovea.jetty.session.Serializer;
-import com.ovea.jetty.session.SessionManagerSkeleton;
-import com.ovea.jetty.session.serializer.XStreamSerializer;
-import org.eclipse.jetty.util.log.Log;
-import org.eclipse.jetty.util.log.Logger;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisPool;
-import redis.clients.jedis.TransactionBlock;
-import redis.clients.jedis.exceptions.JedisException;
+import static java.lang.Integer.parseInt;
+import static java.lang.Long.parseLong;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 import javax.naming.InitialContext;
 import javax.servlet.http.HttpServletRequest;
-import java.util.*;
 
-import static java.lang.Integer.parseInt;
-import static java.lang.Long.parseLong;
+import org.eclipse.jetty.util.log.Log;
+import org.eclipse.jetty.util.log.Logger;
+
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.Transaction;
+
+import com.ovea.jetty.session.Serializer;
+import com.ovea.jetty.session.SessionManagerSkeleton;
+import com.ovea.jetty.session.serializer.XStreamSerializer;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
@@ -94,6 +101,12 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         super.doStop();
         serializer.stop();
     }
+    
+    @Override
+    protected boolean loadSessionNeeded(RedisSession session) {
+    	long now = System.currentTimeMillis();
+    	return (now - session.lastSaved) > (saveIntervalSec * 1000L);
+    }
 
     @Override
     protected RedisSession loadSession(final String clusterId, final RedisSession current) {
@@ -128,7 +141,8 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         return loaded;
     }
 
-    private RedisSession loadFromStore(final String clusterId, final RedisSession current) {
+    @SuppressWarnings("unchecked")
+	private RedisSession loadFromStore(final String clusterId, final RedisSession current) {
         List<String> redisData = jedisExecutor.execute(new JedisCallback<List<String>>() {
             @Override
             public List<String> execute(Jedis jedis) {
@@ -164,7 +178,8 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
             data.put(FIELDS[i], redisData.get(i));
         String attrs = data.get("attributes");
         //noinspection unchecked
-        return new RedisSession(data, attrs == null ? new HashMap<String, Object>() : serializer.deserialize(attrs, Map.class));
+        return new RedisSession(data, attrs == null ? new HashMap<String, Object>() : 
+        	serializer.deserialize(attrs, Map.class));
     }
 
     @Override
@@ -176,22 +191,20 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
             if (toStore.containsKey("attributes"))
                 toStore.put("attributes", serializer.serialize(session.getSessionAttributes()));
             LOG.debug("[RedisSessionManager] storeSession - Storing session id={}", session.getClusterId());
-            jedisExecutor.execute(new JedisCallback<Object>() {
+            jedisExecutor.execute(new JedisCallback<Void>() {
                 @Override
-                public Object execute(Jedis jedis) {
+                public Void execute(Jedis jedis) {
                     session.lastSaved = System.currentTimeMillis();
                     toStore.put("lastSaved", "" + session.lastSaved);
-                    return jedis.multi(new TransactionBlock() {
-                        @Override
-                        public void execute() throws JedisException {
-                            final String key = RedisSessionIdManager.REDIS_SESSION_KEY + session.getClusterId();
-                            super.hmset(key, toStore);
-                            int ttl = session.getMaxInactiveInterval();
-                            if (ttl > 0) {
-                                super.expire(key, ttl);
-                            }
-                        }
-                    });
+                    Transaction t = jedis.multi();
+                    final String key = RedisSessionIdManager.REDIS_SESSION_KEY + session.getClusterId();
+                    t.hmset(key, toStore);
+                    int ttl = session.getMaxInactiveInterval();
+                    if (ttl > 0) {
+                        t.expire(key, ttl);
+                    }
+                    t.exec();
+                    return null;
                 }
             });
             session.redisMap.clear();
@@ -214,7 +227,7 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         });
     }
 
-    final class RedisSession extends SessionManagerSkeleton.SessionSkeleton {
+    final class RedisSession extends SessionManagerSkeleton<?>.SessionSkeleton {
 
         private final Map<String, String> redisMap = new TreeMap<String, String>();
 

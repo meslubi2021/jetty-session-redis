@@ -15,17 +15,16 @@
  */
 package com.ovea.jetty.session.serializer;
 
-import com.ovea.jetty.session.SerializerException;
-import org.codehaus.jackson.map.DeserializationConfig;
-import org.codehaus.jackson.map.ObjectMapper;
-import org.codehaus.jackson.map.SerializationConfig;
-import org.codehaus.jackson.map.introspect.AnnotatedField;
-import org.codehaus.jackson.map.introspect.JacksonAnnotationIntrospector;
-import org.codehaus.jackson.map.introspect.VisibilityChecker;
+import static org.codehaus.jackson.annotate.JsonAutoDetect.Visibility.ANY;
 
 import java.io.IOException;
 
-import static org.codehaus.jackson.annotate.JsonAutoDetect.Visibility.ANY;
+import org.codehaus.jackson.map.DeserializationConfig;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.map.SerializationConfig;
+import org.codehaus.jackson.map.introspect.VisibilityChecker;
+
+import com.ovea.jetty.session.SerializerException;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)

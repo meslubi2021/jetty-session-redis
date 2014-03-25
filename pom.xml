@@ -9,7 +9,7 @@
     </parent>
 
     <artifactId>jetty-session-redis</artifactId>
-    <version>2.4.ga</version>
+    <version>2.4.viz</version>
     <packaging>jar</packaging>
 
     <name>jetty-session-redis</name>
@@ -25,14 +25,14 @@
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>
-            <version>2.2.1</version>
+            <version>2.4.2</version>
             <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>org.eclipse.jetty.aggregate</groupId>
             <artifactId>jetty-all</artifactId>
-            <version>8.1.2.v20120308</version>
+            <version>8.1.12.v20130726</version>
             <scope>provided</scope>
         </dependency>
 

@@ -15,18 +15,20 @@
  */
 package com.ovea.jetty.session.redis;
 
-import com.ovea.jetty.session.SessionIdManagerSkeleton;
+import java.util.LinkedList;
+import java.util.List;
+
+import javax.naming.InitialContext;
+
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
+
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
-import redis.clients.jedis.TransactionBlock;
-import redis.clients.jedis.exceptions.JedisException;
+import redis.clients.jedis.Transaction;
 
-import javax.naming.InitialContext;
-import java.util.LinkedList;
-import java.util.List;
+import com.ovea.jetty.session.SessionIdManagerSkeleton;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
@@ -103,14 +105,11 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
         List<Object> status = jedisExecutor.execute(new JedisCallback<List<Object>>() {
             @Override
             public List<Object> execute(Jedis jedis) {
-                return jedis.multi(new TransactionBlock() {
-                    @Override
-                    public void execute() throws JedisException {
-                        for (String clusterId : clusterIds) {
-                            exists(REDIS_SESSION_KEY + clusterId);
-                        }
-                    }
-                });
+            	Transaction t = jedis.multi();
+                for (String clusterId : clusterIds) {
+                    t.exists(REDIS_SESSION_KEY + clusterId);
+                }
+                return t.exec();
             }
         });
         for (int i = 0; i < status.size(); i++)

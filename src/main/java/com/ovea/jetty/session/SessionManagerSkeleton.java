@@ -36,7 +36,7 @@ import static java.lang.Math.round;
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
  */
-public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton.SessionSkeleton> extends AbstractSessionManager {
+public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>.SessionSkeleton> extends AbstractSessionManager {
 
     private final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
     private static final Field _cookieSet;
@@ -51,6 +51,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton.Se
     }
 
     private final ConcurrentMap<String, T> sessions = new ConcurrentHashMap<String, T>();
+    
 
     @Override
     public void doStart() throws Exception {
@@ -113,23 +114,28 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton.Se
     }
 
     @Override
-    public final SessionManagerSkeleton.SessionSkeleton getSession(String clusterId) {
+    public final T getSession(String clusterId) {
         synchronized (sessions) {
             T current = sessions.get(clusterId);
-            T loaded = loadSession(clusterId, current);
-            if (loaded != null) {
-                sessions.put(clusterId, loaded);
-                if (current != loaded)
-                    loaded.didActivate();
+            if (loadSessionNeeded(current)) {
+	            T loaded = loadSession(clusterId, current);
+	            if (loaded != null) {
+	                sessions.put(clusterId, loaded);
+	                if (current != loaded)
+	                    loaded.didActivate();
+	            }
+	            return loaded;
+            } else {
+            	return current;
             }
-            return loaded;
         }
     }
+    
+    protected abstract boolean loadSessionNeeded(T session);
 
-    @SuppressWarnings({"deprecation"})
     @Override
     @Deprecated
-    public final Map getSessionMap() {
+    public final Map<String, T> getSessionMap() {
         return Collections.unmodifiableMap(sessions);
     }
 
@@ -169,7 +175,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton.Se
             Thread.currentThread().setContextClassLoader(old_loader);
         }
     }
-
+    
     public final void setSessionPath(String path) {
         getSessionCookieConfig().setPath(path);
     }

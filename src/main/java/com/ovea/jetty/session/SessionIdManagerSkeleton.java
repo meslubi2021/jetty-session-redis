@@ -83,7 +83,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
                                 sessions.remove(clusterId);
                             forEachSessionManager(new SessionManagerCallback() {
                                 @Override
-                                public void execute(SessionManagerSkeleton sessionManager) {
+                                public void execute(SessionManagerSkeleton<?> sessionManager) {
                                     sessionManager.expire(expired);
                                 }
                             });
@@ -153,7 +153,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
             deleteClusterId(clusterId);
             forEachSessionManager(new SessionManagerCallback() {
                 @Override
-                public void execute(SessionManagerSkeleton sessionManager) {
+                public void execute(SessionManagerSkeleton<?> sessionManager) {
                     sessionManager.invalidateSession(clusterId);
                 }
             });
@@ -175,7 +175,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
             if (sessionHandler != null) {
                 SessionManager manager = sessionHandler.getSessionManager();
                 if (manager != null && manager instanceof SessionManagerSkeleton)
-                    callback.execute((SessionManagerSkeleton) manager);
+                    callback.execute((SessionManagerSkeleton<?>) manager);
             }
         }
     }
@@ -184,6 +184,6 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
      * @author Mathieu Carbou (mathieu.carbou@gmail.com)
      */
     private static interface SessionManagerCallback {
-        void execute(SessionManagerSkeleton sessionManager);
+        void execute(SessionManagerSkeleton<?> sessionManager);
     }
 }
