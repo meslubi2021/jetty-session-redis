@@ -50,6 +50,9 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     private final JedisExecutor jedisExecutor;
     private final Serializer serializer;
 
+
+    private long staleIntervalSec = 10; // assume session to be fresh for 10 secs without refreshing from redis
+    
     private long saveIntervalSec = 20; //only persist changes to session access times every 20 secs
 
     public RedisSessionManager(JedisPool jedisPool) {
@@ -86,6 +89,10 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         };
     }
 
+    public void setStaleInterval(long sec) {
+        staleIntervalSec = sec;
+    }
+    
     public void setSaveInterval(long sec) {
         saveIntervalSec = sec;
     }
@@ -105,7 +112,11 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     @Override
     protected boolean loadSessionNeeded(RedisSession session) {
     	long now = System.currentTimeMillis();
-    	return (now - session.lastSaved) > (saveIntervalSec * 1000L);
+    	if (session == null) {
+    		return true;
+    	} else {
+    		return (now - session.lastSynced) > (staleIntervalSec * 1000L);
+    	}
     }
 
     @Override
@@ -167,6 +178,9 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         });
         if (redisData == null) {
             // case where session has not been modified
+        	if (current != null) {
+        		current.lastSynced = System.currentTimeMillis();
+        	}
             return current;
         }
         if (redisData.isEmpty() || redisData.get(0) == null) {
@@ -195,6 +209,7 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
                 @Override
                 public Void execute(Jedis jedis) {
                     session.lastSaved = System.currentTimeMillis();
+                    session.lastSynced = System.currentTimeMillis();
                     toStore.put("lastSaved", "" + session.lastSaved);
                     Transaction t = jedis.multi();
                     final String key = RedisSessionIdManager.REDIS_SESSION_KEY + session.getClusterId();
@@ -233,6 +248,7 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
 
         private long expiryTime;
         private long lastSaved;
+        private long lastSynced;
         private String lastNode;
         private final ThreadLocal<Boolean> firstAccess = new ThreadLocal<Boolean>() {
             @Override
@@ -246,6 +262,7 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
             lastNode = getSessionIdManager().getWorkerName();
             long ttl = getMaxInactiveInterval();
             expiryTime = ttl <= 0 ? 0 : System.currentTimeMillis() / 1000 + ttl;
+            lastSynced = System.currentTimeMillis();
             // new session so prepare redis map accordingly
             redisMap.put("id", getClusterId());
             redisMap.put("context", getCanonicalizedContext());
@@ -265,6 +282,7 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
             lastNode = redisData.get("lastNode");
             expiryTime = parseLong(redisData.get("expiryTime"));
             lastSaved = parseLong(redisData.get("lastSaved"));
+            lastSynced = System.currentTimeMillis();
             super.setMaxInactiveInterval(parseInt(redisData.get("maxIdle")));
             setCookieSetTime(parseLong(redisData.get("cookieSet")));
             for (Map.Entry<String, Object> entry : attributes.entrySet()) {
