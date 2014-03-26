@@ -15,6 +15,7 @@
  */
 package com.ovea.jetty.session.serializer;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -32,7 +33,38 @@ public final class JdkSerializer extends BinarySerializer {
 
     @Override
     protected Object read(InputStream is) throws Exception {
-        ObjectInputStream ois = new ObjectInputStream(is);
-        return ois.readObject();
+    	ClassLoadingObjectInputStream ois = new ClassLoadingObjectInputStream(is);
+    	try {
+    		return ois.readObject();
+    	} finally {
+    		ois.close();
+    	}
+    }
+    
+    protected class ClassLoadingObjectInputStream extends ObjectInputStream
+    {
+        public ClassLoadingObjectInputStream(java.io.InputStream in) throws IOException
+        {
+            super(in);
+        }
+
+        public ClassLoadingObjectInputStream () throws IOException
+        {
+            super();
+        }
+
+        @Override
+        public Class<?> resolveClass (java.io.ObjectStreamClass cl) throws IOException, ClassNotFoundException
+        {
+            try
+            {
+                return Class.forName(cl.getName(), false, Thread.currentThread().getContextClassLoader());
+            }
+            catch (ClassNotFoundException e)
+            {
+                return super.resolveClass(cl);
+            }
+        }
     }
 }
+
