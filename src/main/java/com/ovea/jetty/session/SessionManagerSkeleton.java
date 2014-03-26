@@ -15,15 +15,8 @@
  */
 package com.ovea.jetty.session;
 
-import org.eclipse.jetty.server.session.AbstractSession;
-import org.eclipse.jetty.server.session.AbstractSessionManager;
-import org.eclipse.jetty.util.LazyList;
-import org.eclipse.jetty.util.log.Log;
-import org.eclipse.jetty.util.log.Logger;
+import static java.lang.Math.round;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpSessionEvent;
-import javax.servlet.http.HttpSessionListener;
 import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.List;
@@ -31,7 +24,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-import static java.lang.Math.round;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpSessionEvent;
+import javax.servlet.http.HttpSessionListener;
+
+import org.eclipse.jetty.server.session.AbstractSession;
+import org.eclipse.jetty.server.session.AbstractSessionManager;
+import org.eclipse.jetty.util.LazyList;
+import org.eclipse.jetty.util.log.Log;
+import org.eclipse.jetty.util.log.Logger;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
@@ -71,9 +72,20 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             @SuppressWarnings({"unchecked"}) T sessionSkeleton = (T) session;
             String clusterId = getClusterId(session);
             sessions.put(clusterId, sessionSkeleton);
-            sessionSkeleton.willPassivate();
-            storeSession(sessionSkeleton);
-            sessionSkeleton.didActivate();
+ 
+            try
+            {
+                synchronized (session)
+                {
+                    sessionSkeleton.willPassivate();
+                    storeSession(sessionSkeleton);
+                    sessionSkeleton.didActivate();
+                }
+            }
+            catch (Exception e)
+            {
+                LOG.warn("Unable to store new session id="+session.getId() , e);
+            }
         }
     }
 

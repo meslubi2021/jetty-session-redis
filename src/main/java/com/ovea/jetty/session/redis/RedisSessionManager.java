@@ -318,15 +318,18 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
 
         @Override
         protected boolean access(long time) {
-            boolean ret = super.access(time);
-            firstAccess.remove();
-            int ttl = getMaxInactiveInterval();
-            expiryTime = ttl <= 0 ? 0 : time / 1000 + ttl;
-            // prepare serialization
-            redisMap.put("lastAccessed", "" + getLastAccessedTime());
-            redisMap.put("accessed", "" + getAccessed());
-            redisMap.put("expiryTime", "" + expiryTime);
-            return ret;
+            synchronized (this)
+            {
+	            boolean ret = super.access(time);
+	            firstAccess.remove();
+	            int ttl = getMaxInactiveInterval();
+	            expiryTime = ttl <= 0 ? 0 : time / 1000 + ttl;
+	            // prepare serialization
+	            redisMap.put("lastAccessed", "" + getLastAccessedTime());
+	            redisMap.put("accessed", "" + getAccessed());
+	            redisMap.put("expiryTime", "" + expiryTime);
+	            return ret;
+            }
         }
 
         @Override
@@ -345,21 +348,25 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
 
         @Override
         protected void complete() {
-            super.complete();
-            if (!redisMap.isEmpty()
-                && (redisMap.size() != 3
-                || !redisMap.containsKey("lastAccessed")
-                || !redisMap.containsKey("accessed")
-                || !redisMap.containsKey("expiryTime")
-                || getAccessed() - lastSaved >= saveIntervalSec * 1000)) {
-                try {
-                    willPassivate();
-                    storeSession(this);
-                    didActivate();
-                } catch (Exception e) {
-                    LOG.warn("[RedisSessionManager] complete - Problem persisting changed session data id=" + getId(), e);
-                } finally {
-                    redisMap.clear();
+        	synchronized (this) {
+	            super.complete();
+                if (isValid()) {
+		            if (!redisMap.isEmpty()
+		                && (redisMap.size() != 3
+		                || !redisMap.containsKey("lastAccessed")
+		                || !redisMap.containsKey("accessed")
+		                || !redisMap.containsKey("expiryTime")
+		                || getAccessed() - lastSaved >= saveIntervalSec * 1000)) {
+		                try {
+		                    willPassivate();
+		                    storeSession(this);	
+		                    didActivate();
+		                } catch (Exception e) {
+		                    LOG.warn("[RedisSessionManager] complete - Problem persisting changed session data id=" + getId(), e);
+		                } finally {
+		                    redisMap.clear();
+		                }
+		            }
                 }
             }
         }
