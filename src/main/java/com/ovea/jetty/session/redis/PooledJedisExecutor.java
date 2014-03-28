@@ -36,9 +36,12 @@ class PooledJedisExecutor implements JedisExecutor {
             return cb.execute(jedis);
         } catch (JedisException e) {
             jedisPool.returnBrokenResource(jedis);
+            jedis = null;
             throw e;
         } finally {
-            jedisPool.returnResource(jedis);
+        	if (jedis != null) {
+        		jedisPool.returnResource(jedis);
+        	}
         }
     }
 
