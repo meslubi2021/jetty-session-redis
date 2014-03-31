@@ -37,7 +37,6 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
 
     final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
 
-    private static final Long ZERO = 0L;
     private static final String REDIS_SESSIONS_KEY = "jetty-sessions";
     static final String REDIS_SESSION_KEY = "jetty-session-";
 
@@ -112,11 +111,17 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
                 return t.exec();
             }
         });
-        for (int i = 0; i < status.size(); i++)
-            if (ZERO.equals(status.get(i)))
+        for (int i = 0; i < status.size(); i++) {
+        	if (LOG.isDebugEnabled()) {
+        		LOG.debug("[RedisSessionIdManager] clusterId: {}, status: {}", clusterIds.get(i), status.get(i));
+        	}
+            if (Boolean.FALSE.equals(status.get(i))) {
                 expired.add(clusterIds.get(i));
-        if (LOG.isDebugEnabled() && !expired.isEmpty())
+            }
+        }
+        if (LOG.isDebugEnabled() && !expired.isEmpty()) {
             LOG.debug("[RedisSessionIdManager] Scavenger found {} sessions to expire: {}", expired.size(), expired);
+        }
         return expired;
     }
 

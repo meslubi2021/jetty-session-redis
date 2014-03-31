@@ -71,8 +71,9 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
         if (isRunning()) {
             @SuppressWarnings({"unchecked"}) T sessionSkeleton = (T) session;
             String clusterId = getClusterId(session);
+
+            LOG.debug("[SessionManagerSkeleton] add new session id=" + session.getId());
             sessions.put(clusterId, sessionSkeleton);
- 
             try
             {
                 synchronized (session)
@@ -84,7 +85,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             }
             catch (Exception e)
             {
-                LOG.warn("Unable to store new session id="+session.getId() , e);
+                LOG.warn("[SessionManagerSkeleton] Unable to store new session id=" + session.getId() , e);
             }
         }
     }
@@ -115,11 +116,12 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
     protected final boolean removeSession(String clusterId) {
         synchronized (this) {
             T session = sessions.remove(clusterId);
+            LOG.debug("[SessionManagerSkeleton] removed session id=" + session.getId());
             try {
                 if (session != null)
                     deleteSession(session);
             } catch (Exception e) {
-                LOG.warn("Problem deleting session id=" + clusterId, e);
+                LOG.warn("[SessionManagerSkeleton] Problem deleting session id=" + clusterId, e);
             }
             return session != null;
         }
@@ -132,6 +134,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             if (loadSessionNeeded(current)) {
 	            T loaded = loadSession(clusterId, current);
 	            if (loaded != null) {
+	                LOG.debug("[SessionManagerSkeleton] loaded session id=" + loaded.getId());
 	                sessions.put(clusterId, loaded);
 	                if (current != loaded)
 	                    loaded.didActivate();
@@ -182,7 +185,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             if (t instanceof ThreadDeath)
                 throw ((ThreadDeath) t);
             else
-                LOG.warn("Problem expiring sessions", t);
+                LOG.warn("[SessionManagerSkeleton] Problem expiring sessions", t);
         } finally {
             Thread.currentThread().setContextClassLoader(old_loader);
         }
@@ -238,7 +241,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
 
         @Override
         public void timeout() throws IllegalStateException {
-            LOG.debug("Timing out session id={}", getClusterId());
+            LOG.debug("[SessionManagerSkeleton] Timing out session id={}", getClusterId());
             super.timeout();
         }
 
