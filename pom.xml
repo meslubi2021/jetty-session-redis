@@ -9,7 +9,7 @@
     </parent>
 
     <artifactId>jetty-session-redis</artifactId>
-    <version>2.4.viz</version>
+    <version>2.4.viz2</version>
     <packaging>jar</packaging>
 
     <name>jetty-session-redis</name>

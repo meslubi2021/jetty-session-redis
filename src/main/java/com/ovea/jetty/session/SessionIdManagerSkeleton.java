@@ -15,6 +15,18 @@
  */
 package com.ovea.jetty.session;
 
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpSession;
+
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.SessionManager;
@@ -23,12 +35,6 @@ import org.eclipse.jetty.server.session.AbstractSessionIdManager;
 import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
-
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpSession;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.*;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
@@ -78,7 +84,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
                 public void run() {
                     if (!sessions.isEmpty()) {
                         try {
-                            final List<String> expired = scavenge(new ArrayList<String>(sessions.keySet()));
+                            final List<String> expired = scavenge();
                             for (String clusterId : expired)
                                 sessions.remove(clusterId);
                             forEachSessionManager(new SessionManagerCallback() {
@@ -166,7 +172,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
 
     protected abstract boolean hasClusterId(String clusterId);
 
-    protected abstract List<String> scavenge(List<String> clusterIds);
+    protected abstract List<String> scavenge();
 
     private void forEachSessionManager(SessionManagerCallback callback) {
         Handler[] contexts = server.getChildHandlersByClass(ContextHandler.class);
