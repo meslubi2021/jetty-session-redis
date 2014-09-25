@@ -16,6 +16,7 @@
 package com.ovea.jetty.session.redis;
 
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
 
@@ -100,8 +101,35 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
     }
 
     @Override
-    protected List<String> scavenge() {
-    	// 전체 sessionId 리스트를 얻어온다
+    protected List<String> scavenge(final List<String> clusterIds) {
+    	deleteExpiredSessionIds();
+        List<String> expired = new LinkedList<String>();
+        List<Object> status = jedisExecutor.execute(new JedisCallback<List<Object>>() {
+            @Override
+            public List<Object> execute(Jedis jedis) {
+            	Transaction t = jedis.multi();
+                for (String clusterId : clusterIds) {
+                    t.exists(REDIS_SESSION_KEY + clusterId);
+                }
+                return t.exec();
+            }
+        });
+        for (int i = 0; i < status.size(); i++) {
+        	if (LOG.isDebugEnabled()) {
+        		LOG.debug("[RedisSessionIdManager] clusterId: {}, status: {}", clusterIds.get(i), status.get(i));
+        	}
+            if (Boolean.FALSE.equals(status.get(i))) {
+                expired.add(clusterIds.get(i));
+            }
+        }
+        if (LOG.isDebugEnabled() && !expired.isEmpty()) {
+            LOG.debug("[RedisSessionIdManager] Scavenger found {} sessions to expire: {}", expired.size(), expired);
+        }
+        return expired;
+    }
+
+	private void deleteExpiredSessionIds() {
+		// 전체 sessionId 리스트를 얻어온다
     	Set<String> sessionIdSet = jedisExecutor.execute(new JedisCallback<Set<String>>() {
             @Override
             public Set<String> execute(Jedis jedis) {
@@ -121,10 +149,11 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
             }
         });
         // session이 존재하지 않는 sessionId를 expiredSessionIds에 넣는다
-        List<String> expiredSessionIds = new ArrayList<String>();
+        final List<String> expiredSessionIds = new ArrayList<String>();
         for (int i = 0; i < status.size(); i++) {
         	if (LOG.isDebugEnabled()) {
-        		LOG.debug("[RedisSessionIdManager] sessionId: {}, status: {}", sessionIdList.get(i), status.get(i));
+        		LOG.debug("[RedisSessionIdManager] session status sessionId: {}, status: {}", 
+        				sessionIdList.get(i), status.get(i));
         	}
             if (Boolean.FALSE.equals(status.get(i))) {
             	expiredSessionIds.add(sessionIdList.get(i));
@@ -132,10 +161,23 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
         }
         
         if (LOG.isDebugEnabled() && !expiredSessionIds.isEmpty()) {
-            LOG.debug("[RedisSessionIdManager] Scavenger found {} sessions to expire: {}", expiredSessionIds.size(), 
-            		expiredSessionIds);
+            LOG.debug("[RedisSessionIdManager] found {} sessionIds to delete: {}", 
+            		expiredSessionIds.size(), expiredSessionIds);
         }
-        return expiredSessionIds;
-    }
+        
+        if (!expiredSessionIds.isEmpty()) {
+	        Long deleted = jedisExecutor.execute(new JedisCallback<Long>() {
+				@Override
+				public Long execute(Jedis jedis) {
+					// TODO Auto-generated method stub
+					return jedis.srem(REDIS_SESSIONS_KEY, expiredSessionIds.toArray(new String[0]));
+				}
+	        });
+	        
+	        if (LOG.isDebugEnabled()) {
+	        	 LOG.debug("[RedisSessionIdManager] Deleted {} expired sessionIds", deleted);
+	        }
+        }
+	}
 
 }

@@ -15,6 +15,7 @@
  */
 package com.ovea.jetty.session;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -84,7 +85,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
                 public void run() {
                     if (!sessions.isEmpty()) {
                         try {
-                            final List<String> expired = scavenge();
+                            final List<String> expired = scavenge(new ArrayList<String>(sessions.keySet()));
                             for (String clusterId : expired)
                                 sessions.remove(clusterId);
                             forEachSessionManager(new SessionManagerCallback() {
@@ -172,7 +173,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
 
     protected abstract boolean hasClusterId(String clusterId);
 
-    protected abstract List<String> scavenge();
+    protected abstract List<String> scavenge(List<String> clusterIds);
 
     private void forEachSessionManager(SessionManagerCallback callback) {
         Handler[] contexts = server.getChildHandlersByClass(ContextHandler.class);
