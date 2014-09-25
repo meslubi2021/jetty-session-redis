@@ -323,15 +323,17 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         protected boolean access(long time) {
             synchronized (this)
             {
-	            boolean ret = super.access(time);
-	            firstAccess.remove();
-	            int ttl = getMaxInactiveInterval();
-	            expiryTime = ttl <= 0 ? 0 : time / 1000 + ttl;
-	            // prepare serialization
-	            redisMap.put("lastAccessed", Long.toString(getLastAccessedTime()));
-	            redisMap.put("accessed", Long.toString(getAccessed()));
-	            redisMap.put("expiryTime", Long.toString(expiryTime));
-	            return ret;
+	            if (super.access(time)) {
+		            firstAccess.remove();
+		            int ttl = getMaxInactiveInterval();
+		            expiryTime = ttl <= 0 ? 0 : time / 1000 + ttl;
+		            // prepare serialization
+		            redisMap.put("lastAccessed", Long.toString(getLastAccessedTime()));
+		            redisMap.put("accessed", Long.toString(getAccessed()));
+		            redisMap.put("expiryTime", Long.toString(expiryTime));
+		            return true;
+	            }
+	            return false;
             }
         }
 
