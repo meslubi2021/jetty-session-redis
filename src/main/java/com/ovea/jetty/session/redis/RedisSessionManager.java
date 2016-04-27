@@ -110,81 +110,80 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     }
     
     @Override
-    protected boolean loadSessionNeeded(RedisSession session) {
-    	long now = System.currentTimeMillis();
-    	if (session == null) {
-    		return true;
-    	} else {
-    		return (now - session.lastSynced) > (staleIntervalSec * 1000L);
-    	}
+    protected boolean sessionReloadNeeded(RedisSession session) {
+        // session이 sync된지 staleIntervalSec 만큼 지나지 않았으면 다시 redis에서 읽어올 필요가 없다
+        // (staleIntervalSec 동안에는 session이 다른 서버로 옮겨갔다 돌아오지 않았다고 가정할 수 있으므로)
+        long now = System.currentTimeMillis();
+        return (now - session.lastSynced) > (staleIntervalSec * 1000L);
     }
 
     @Override
-    protected RedisSession loadSession(final String clusterId, final RedisSession current) {
-        long now = System.currentTimeMillis();
-        RedisSession loaded;
-        if (current == null) {
-            LOG.debug("[RedisSessionManager] loadSession - No session found in cache, loading id={}", clusterId);
-            loaded = loadFromStore(clusterId, current);
-        } else if (current.requestStarted()) {
-            LOG.debug("[RedisSessionManager] loadSession - Existing session found in cache, loading id={}", clusterId);
-            loaded = loadFromStore(clusterId, current);
-        } else {
-            loaded = current;
-        }
+    protected RedisSession loadSession(final String clusterId) {
+        LOG.debug("[RedisSessionManager] loadSession - loading session from Redis id={}", clusterId);
+        RedisSession loaded = loadFromStore(clusterId);
         if (loaded == null) {
-            LOG.debug("[RedisSessionManager] loadSession - No session found in Redis for id={}", clusterId);
-            if (current != null)
-                current.invalidate();
-        } else if (loaded == current) {
-            LOG.debug("[RedisSessionManager] loadSession - No change found in Redis for session id={}", clusterId);
-            return loaded;
-        } else if (!loaded.lastNode.equals(getSessionIdManager().getWorkerName()) || current == null) {
-            //if the session in the database has not already expired
-            if (loaded.expiryTime * 1000 > now) {
+            LOG.debug("[RedisSessionManager] loadSession - no session found in Redis for id={}", clusterId);
+            return null;
+        }
+        long now = System.currentTimeMillis();
+        //if the session in the database has not already expired
+        if (loaded.expiryTime <= 0 || loaded.expiryTime * 1000 > now) {
+            //session last used on a different node, or we don't have it in memory
+            LOG.debug("[RedisSessionManager] loadSession - loaded fresh session from Redis, id={}", loaded.getId());
+            if (!loaded.lastNode.equals(getSessionIdManager().getWorkerName())) {
                 //session last used on a different node, or we don't have it in memory
                 loaded.changeLastNode(getSessionIdManager().getWorkerName());
+            }
+            return loaded;
+        } else {
+            LOG.debug("[RedisSessionManager] loadSession - loaded session has expired, id={}", clusterId);
+            return null;
+        }
+    }
+
+    @Override
+    protected RedisSession reloadSession(final String clusterId, final RedisSession current) {
+        if (!current.requestStarted()) {
+            // 한 스레드에서 세션이 두번이상 로드되는 것을 방지 (왜?)
+            return current;
+        }
+
+        LOG.debug("[RedisSessionManager] reloadSession - reloading session from Redis id={}", clusterId);
+        RedisSession reloaded = reloadFromStore(clusterId, current);
+        if (reloaded == null) {
+            LOG.debug("[RedisSessionManager] reloadSession - no session found in Redis for id={}", clusterId);
+            return null;
+        } else if (reloaded == current) {
+            LOG.debug("[RedisSessionManager] reloadSession - no change found in Redis for session id={}", reloaded.getId());
+            return reloaded;
+        } else {
+            long now = System.currentTimeMillis();
+            if (reloaded.expiryTime <= 0 || reloaded.expiryTime * 1000 > now) {
+                //if the session in the database has not already expired
+                LOG.debug("[RedisSessionManager] loadSession - reloaded fresh session from Redis, id={}", reloaded.getId());
+                if (!reloaded.lastNode.equals(getSessionIdManager().getWorkerName())) {
+                    //session last used on a different node, or we don't have it in memory
+                    reloaded.changeLastNode(getSessionIdManager().getWorkerName());
+                }
+                return reloaded;
             } else {
-                LOG.debug("[RedisSessionManager] loadSession - Loaded session has expired, id={}", clusterId);
-                loaded = null;
+                LOG.debug("[RedisSessionManager] reloadSession - reloaded session has expired, id={}", clusterId);
+                return null;
             }
         }
-        return loaded;
     }
 
     @SuppressWarnings("unchecked")
-	private RedisSession loadFromStore(final String clusterId, final RedisSession current) {
+    private RedisSession loadFromStore(final String clusterId) {
         List<String> redisData = jedisExecutor.execute(new JedisCallback<List<String>>() {
             @Override
             public List<String> execute(Jedis jedis) {
                 final String key = RedisSessionIdManager.REDIS_SESSION_KEY + clusterId;
-                if (current == null) {
-                    return jedis.exists(key) ? jedis.hmget(key, FIELDS) : null;
-                } else {
-                    String val = jedis.hget(key, "lastSaved");
-                    if (val == null) {
-                        // no session in store
-                        return Collections.emptyList();
-                    }
-                    if (current.lastSaved != Long.parseLong(val)) {
-                        // session has changed - reload
-                        return jedis.hmget(key, FIELDS);
-                    } else {
-                        // session dit not changed in cache since last save
-                        return null;
-                    }
-                }
+                return jedis.exists(key) ? jedis.hmget(key, FIELDS) : null;
             }
         });
-        if (redisData == null) {
-            // case where session has not been modified
-        	if (current != null) {
-        		current.lastSynced = System.currentTimeMillis();
-        	}
-            return current;
-        }
-        if (redisData.isEmpty() || redisData.get(0) == null) {
-            // no session found in redis (no data)
+        if (redisData == null || redisData.isEmpty() || redisData.get(0) == null) {
+            // no session found in redis
             return null;
         }
         Map<String, String> data = new HashMap<String, String>();
@@ -192,8 +191,49 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
             data.put(FIELDS[i], redisData.get(i));
         String attrs = data.get("attributes");
         //noinspection unchecked
-        return new RedisSession(data, attrs == null ? new HashMap<String, Object>() : 
-        	serializer.deserialize(attrs, Map.class));
+        return new RedisSession(data, attrs == null ? new HashMap<String, Object>() :
+                serializer.deserialize(attrs, Map.class));
+    }
+
+    @SuppressWarnings("unchecked")
+	private RedisSession reloadFromStore(final String clusterId, final RedisSession current) {
+        // XXX: redisData가 null이면 변함이 없어서 갱신할 필요가 없었다는 것을 의미하며
+        // emptyList이면 저장된 세션이 없다는 것을 의미
+        List<String> redisData = jedisExecutor.execute(new JedisCallback<List<String>>() {
+            @Override
+            public List<String> execute(Jedis jedis) {
+                final String key = RedisSessionIdManager.REDIS_SESSION_KEY + clusterId;
+                String val = jedis.hget(key, "lastSaved");
+                if (val == null) {
+                    // no session in store
+                    return Collections.emptyList();
+                }
+                if (current.lastSaved != Long.parseLong(val)) {
+                    // session has changed - reload
+                    return jedis.hmget(key, FIELDS);
+                } else {
+                    // session dit not changed in cache since last save
+                    return null;
+                }
+            }
+        });
+        if (redisData == null) {
+            // 세션이 그동안 갱신되지 않은 경우 - current를 그대로 사용 가능하다.
+            // redis와 메모리에 있는 세션을 일치시킨 시점을 기록한 후 sessionReloadNeeded()에서 판단하는데 사용
+            current.lastSynced = System.currentTimeMillis();
+            return current;
+        }
+        if (redisData.isEmpty() || redisData.get(0) == null) {
+            // redis에 저장된 세션이 없는 경우
+            return null;
+        }
+        Map<String, String> data = new HashMap<String, String>();
+        for (int i = 0; i < FIELDS.length; i++)
+            data.put(FIELDS[i], redisData.get(i));
+        String attrs = data.get("attributes");
+        //noinspection unchecked
+        return new RedisSession(data, attrs == null ? new HashMap<String, Object>() :
+                serializer.deserialize(attrs, Map.class));
     }
 
     @Override
