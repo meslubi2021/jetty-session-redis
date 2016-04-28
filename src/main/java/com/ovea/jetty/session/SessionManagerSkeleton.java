@@ -67,21 +67,18 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
     }
 
     @Override
-    protected final void addSession(AbstractSession session) {
+    protected final void addSession(final AbstractSession session) {
         if (isRunning()) {
             @SuppressWarnings({"unchecked"}) T sessionSkeleton = (T) session;
             String clusterId = getClusterId(session);
+            LOG.debug("[SessionManagerSkeleton] add new session id={}", session.getId());
 
-            LOG.debug("[SessionManagerSkeleton] add new session id=" + session.getId());
             sessions.put(clusterId, sessionSkeleton);
             try
             {
-                synchronized (session)
-                {
-                    sessionSkeleton.willPassivate();
-                    storeSession(sessionSkeleton);
-                    sessionSkeleton.didActivate();
-                }
+                sessionSkeleton.willPassivate();
+                storeSession(sessionSkeleton);
+                sessionSkeleton.didActivate();
             }
             catch (Exception e)
             {
@@ -114,39 +111,77 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
 
     @Override
     protected final boolean removeSession(String clusterId) {
-        synchronized (this) {
-            T session = sessions.remove(clusterId);
-            LOG.debug("[SessionManagerSkeleton] removed session id=" + session.getId());
-            try {
-                if (session != null)
-                    deleteSession(session);
-            } catch (Exception e) {
-                LOG.warn("[SessionManagerSkeleton] Problem deleting session id=" + clusterId, e);
+        LOG.debug("[SessionManagerSkeleton] removing session id={}", clusterId);
+        T session = sessions.remove(clusterId);
+        try {
+            if (session != null) {
+                LOG.debug("[SessionManagerSkeleton] removed session id={}", session.getId());
+                deleteSession(session);
             }
-            return session != null;
+        } catch (Exception e) {
+            LOG.warn("[SessionManagerSkeleton] Problem deleting session id=" + clusterId, e);
         }
+        return session != null;
     }
 
     @Override
     public final T getSession(String clusterId) {
-        synchronized (sessions) {
-            T current = sessions.get(clusterId);
-            if (loadSessionNeeded(current)) {
-	            T loaded = loadSession(clusterId, current);
-	            if (loaded != null) {
-	                LOG.debug("[SessionManagerSkeleton] loaded session id=" + loaded.getId());
-	                sessions.put(clusterId, loaded);
-	                if (current != loaded)
-	                    loaded.didActivate();
-	            }
-	            return loaded;
+        final T current = sessions.get(clusterId);
+        if (current == null) {
+            // 세션이 메모리에 있는 없는 경우
+            T loaded = loadSession(clusterId);
+            if (loaded == null) {
+                // 세션이 메모리에도 없고 redis에도 없는 경우
+                LOG.debug("[SessionManagerSkeleton] failed to load session for cluster id={}", clusterId);
+                return null;
             } else {
-            	return current;
+                // 세션이 메모리에 없어 redis에서 읽어온 경우
+                LOG.debug("[SessionManagerSkeleton] loaded session id={}", loaded.getId());
+                T prev = sessions.putIfAbsent(clusterId, loaded);
+                if (prev == null) {
+                    loaded.didActivate();
+                    return loaded;
+                } else {
+                    return prev;
+                }
+            }
+        } else {
+            // current != null 인 경우, 즉 세션이 메모리에 있는 경우
+            synchronized (current) {
+                // 다른 스레드에서 put 했을 수도 있으므로 다시 get 해 온다
+                T current2 = sessions.get(clusterId);
+                if (current2 != current) {
+                    // 다른 스레드에서 뭔가 바꿨으면 처음부터 다시 시작
+                    return getSession(clusterId);
+                }
+                if (sessionReloadNeeded(current)) {
+                    // 메모리에 있는 세션의 유효성을 다시 확인하기로 한 경우 (lastSynced 시간 기준)
+                    T reloaded = reloadSession(clusterId, current);
+                    if (reloaded == null) {
+                        // redis에는 세션이 없는 경우... 메모리에 있는게 유효하지 않는 것으로 판단
+                        LOG.debug("[SessionManagerSkeleton] failed to reload session for cluster id={}", clusterId);
+                        return null;
+                    } else if (reloaded == current) {
+                        // redis에 세션이 있는데 변경점이 없어서 메모리에 있는 것을 그대로 사용 가능 (lastSaved 기준)
+                        LOG.debug("[SessionManagerSkeleton] session synced w/o reload id={}", reloaded.getId());
+                        return reloaded;
+                    } else {
+                        // redis에 세션이 있는데 메모리와 있는 것과 일치하지 않아서 다시 읽어온 경우
+                        // (세션이 한개 이상의 서버에서 접근 되었음을 의미)
+                        LOG.debug("[SessionManagerSkeleton] reloaded session id={}", reloaded.getId());
+                        sessions.put(clusterId, reloaded);
+                        reloaded.didActivate();
+                        return reloaded;
+                    }
+                } else {
+                    // 메모리에 있는 세션의 유효성을 다시 확인하지도 않으면서 그대로 사용 할 수 있는 경우
+                    return current;
+                }
             }
         }
     }
     
-    protected abstract boolean loadSessionNeeded(T session);
+    protected abstract boolean sessionReloadNeeded(T session);
 
     @Override
     @Deprecated
@@ -182,10 +217,11 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
                     session.timeout();
             }
         } catch (Throwable t) {
-            if (t instanceof ThreadDeath)
+            if (t instanceof ThreadDeath) {
                 throw ((ThreadDeath) t);
-            else
+            } else {
                 LOG.warn("[SessionManagerSkeleton] Problem expiring sessions", t);
+            }
         } finally {
             Thread.currentThread().setContextClassLoader(old_loader);
         }
@@ -226,7 +262,9 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
 
     protected abstract void deleteSession(T session);
 
-    protected abstract T loadSession(String clusterId, T current);
+    protected abstract T loadSession(String clusterId);
+
+    protected abstract T reloadSession(String clusterId, T current);
 
     public abstract class SessionSkeleton extends AbstractSession {
 
