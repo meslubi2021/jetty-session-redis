@@ -76,12 +76,9 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             sessions.put(clusterId, sessionSkeleton);
             try
             {
-                synchronized (session)
-                {
-                    sessionSkeleton.willPassivate();
-                    storeSession(sessionSkeleton);
-                    sessionSkeleton.didActivate();
-                }
+                sessionSkeleton.willPassivate();
+                storeSession(sessionSkeleton);
+                sessionSkeleton.didActivate();
             }
             catch (Exception e)
             {
@@ -151,6 +148,12 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
         } else {
             // current != null 인 경우, 즉 세션이 메모리에 있는 경우
             synchronized (current) {
+                // 다른 스레드에서 put 했을 수도 있으므로 다시 get 해 온다
+                T current2 = sessions.get(clusterId);
+                if (current2 != current) {
+                    // 다른 스레드에서 뭔가 바꿨으면 처음부터 다시 시작
+                    return getSession(clusterId);
+                }
                 if (sessionReloadNeeded(current)) {
                     // 메모리에 있는 세션의 유효성을 다시 확인하기로 한 경우 (lastSynced 시간 기준)
                     T reloaded = reloadSession(clusterId, current);
