@@ -44,9 +44,9 @@ class PooledJedisExecutor implements JedisExecutor {
             jedis = null;
             throw e;
         } finally {
-        	if (jedis != null) {
-        		jedisPool.returnResource(jedis);
-        	}
+            if (jedis != null) {
+                jedisPool.returnResource(jedis);
+            }
         }
     }
 

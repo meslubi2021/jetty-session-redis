@@ -344,21 +344,21 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
             synchronized (this) {
                 this.lastNode = lastNode;
                 this.forceUpdateMetadata = true;
-			}
+            }
         }
 
         @Override
         public void setAttribute(String name, Object value) {
             synchronized (this) {
-	            super.setAttribute(name, value);
-	            dirty = true;
+                super.setAttribute(name, value);
+                dirty = true;
             }
         }
 
         @Override
         public void removeAttribute(String name) {
             synchronized (this) {
-	            super.removeAttribute(name);
+                super.removeAttribute(name);
                 dirty = true;
             }
         }
@@ -377,19 +377,19 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         protected boolean access(long time) {
             synchronized (this)
             {
-	            if (super.access(time)) {
-		            int ttl = getMaxInactiveInterval();
-		            expiryTime = ttl <= 0 ? 0 : time / 1000 + ttl;  // ttl, expiryTime은 초단위 임에 주의
-		            return true;
-	            }
-	            return false;
+                if (super.access(time)) {
+                    int ttl = getMaxInactiveInterval();
+                    expiryTime = ttl <= 0 ? 0 : time / 1000 + ttl;  // ttl, expiryTime은 초단위 임에 주의
+                    return true;
+                }
+                return false;
             }
         }
 
         @Override
         protected void complete() {
-        	synchronized (this) {
-	            super.complete();
+            synchronized (this) {
+                super.complete();
                 try {
                     if (isValid()) {
                         if (dirty) {
