@@ -75,6 +75,7 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
 
     private long staleIntervalSec = 10; // assume session to be fresh for 10 secs without refreshing from redis
     private long saveIntervalSec = 20; //only persist changes to session access times every 20 secs
+    private boolean forceSaveAttributes = false; // when metadata updated, also updates session attributes
 
     public RedisSessionManager(JedisPool jedisPool) {
         this(jedisPool, new XStreamSerializer());
@@ -116,6 +117,10 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     
     public void setSaveInterval(long sec) {
         saveIntervalSec = sec;
+    }
+
+    public void setForceSaveAttributes(boolean forceSaveAttributes) {
+        this.forceSaveAttributes = forceSaveAttributes;
     }
 
     @Override
@@ -399,7 +404,13 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
                         } else {
                             boolean timeToSaveMetadata = (getAccessed() - lastSaved) >= (saveIntervalSec * 1000);
                             if (timeToSaveMetadata || forceUpdateMetadata) {
-                                updateSessionMetadata(this);
+                                if (forceSaveAttributes) {
+                                    // metadata를 갱신할때 session attributes도 다시 저장한다
+                                    updateSession(this);
+                                } else {
+                                    // metadata만 갱신
+                                    updateSessionMetadata(this);
+                                }
                             }
                         }
                     }
