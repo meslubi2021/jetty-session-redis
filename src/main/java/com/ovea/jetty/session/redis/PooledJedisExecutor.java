@@ -35,17 +35,16 @@ class PooledJedisExecutor implements JedisExecutor {
 
     @Override
     public <V> V execute(JedisCallback<V> cb) {
-        Jedis jedis = jedisPool.getResource();
+        Jedis jedis = null;
         try {
+            jedis = jedisPool.getResource();
             return cb.execute(jedis);
         } catch (RuntimeException e) {
-            jedisPool.returnBrokenResource(jedis);
             LOG.warn("exeception raised inside jedisCallback: ", e);
-            jedis = null;
             throw e;
         } finally {
             if (jedis != null) {
-                jedisPool.returnResource(jedis);
+                jedis.close();
             }
         }
     }
