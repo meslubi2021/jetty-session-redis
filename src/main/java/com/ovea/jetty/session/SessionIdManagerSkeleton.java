@@ -16,9 +16,10 @@
 package com.ovea.jetty.session;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -42,9 +43,9 @@ import org.eclipse.jetty.util.log.Logger;
  */
 public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager {
 
-    final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
+    private final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
     // for a session id in the whole jetty, each webapp can have different sessions for the same id
-    private final ConcurrentMap<String, Object> sessions = new ConcurrentHashMap<String, Object>();
+    private final Set<String> sessions = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     private final Server server;
 
@@ -85,7 +86,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
                 public void run() {
                     if (!sessions.isEmpty()) {
                         try {
-                            final List<String> expired = scavenge(new ArrayList<String>(sessions.keySet()));
+                            final List<String> expired = scavenge(new ArrayList<String>(sessions));
                             for (String clusterId : expired)
                                 sessions.remove(clusterId);
                             forEachSessionManager(new SessionManagerCallback() {
@@ -134,37 +135,47 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
     @Override
     public final boolean idInUse(String id) {
         String cid = getClusterId(id);
-        return id != null && (sessions.containsKey(cid) || hasClusterId(cid));
+        return id != null && (sessions.contains(cid) || hasClusterId(cid));
     }
 
     @Override
     public final void addSession(HttpSession session) {
         String clusterId = getClusterId(session.getId());
         storeClusterId(clusterId);
-        sessions.putIfAbsent(clusterId, Void.class);
+        sessions.add(clusterId);
     }
 
     @Override
     public final void removeSession(HttpSession session) {
+        if (session == null) {
+            return;
+        }
         String clusterId = getClusterId(session.getId());
-        if (sessions.containsKey(clusterId)) {
+        removeSession(clusterId);
+    }
+
+    public void removeSession (String clusterId) {
+        if (clusterId == null)
+            return;
+
+        LOG.debug("Removing session clusterId={}", clusterId);
+        try {
             sessions.remove(clusterId);
             deleteClusterId(clusterId);
+        } catch (Exception e) {
+            LOG.warn("Problem removing session clusterId=" + clusterId, e);
         }
     }
 
     @Override
     public final void invalidateAll(final String clusterId) {
-        if (sessions.containsKey(clusterId)) {
-            sessions.remove(clusterId);
-            deleteClusterId(clusterId);
-            forEachSessionManager(new SessionManagerCallback() {
-                @Override
-                public void execute(SessionManagerSkeleton<?> sessionManager) {
-                    sessionManager.invalidateSession(clusterId);
-                }
-            });
-        }
+        removeSession(clusterId);
+        forEachSessionManager(new SessionManagerCallback() {
+            @Override
+            public void execute(SessionManagerSkeleton<?> sessionManager) {
+                sessionManager.invalidateSession(clusterId);
+            }
+        });
     }
 
     protected abstract void deleteClusterId(String clusterId);
@@ -190,7 +201,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
     /**
      * @author Mathieu Carbou (mathieu.carbou@gmail.com)
      */
-    private static interface SessionManagerCallback {
+    private interface SessionManagerCallback {
         void execute(SessionManagerSkeleton<?> sessionManager);
     }
 }
