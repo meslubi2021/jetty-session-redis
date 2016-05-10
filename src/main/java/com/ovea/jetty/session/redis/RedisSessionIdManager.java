@@ -16,6 +16,8 @@
 package com.ovea.jetty.session.redis;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
@@ -31,13 +33,14 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.Transaction;
 
 import com.ovea.jetty.session.SessionIdManagerSkeleton;
+import redis.clients.jedis.exceptions.JedisException;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
  */
 public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
 
-    final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
+    private final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
 
     private static final String REDIS_SESSIONS_KEY = "jetty-sessions";
     static final String REDIS_SESSION_KEY = "jetty-session-";
@@ -72,63 +75,73 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
 
     @Override
     protected void deleteClusterId(final String clusterId) {
-        jedisExecutor.execute(new JedisCallback<Object>() {
+        try {
+            jedisExecutor.execute(new JedisCallback<Object>() {
             @Override
             public Object execute(Jedis jedis) {
                 return jedis.srem(REDIS_SESSIONS_KEY, clusterId);
             }
         });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionIdManager] deleteClusterId - redis exception", je);
+        }
     }
 
     @Override
     protected void storeClusterId(final String clusterId) {
-        jedisExecutor.execute(new JedisCallback<Object>() {
-            @Override
-            public Object execute(Jedis jedis) {
-                return jedis.sadd(REDIS_SESSIONS_KEY, clusterId);
-            }
-        });
+        try {
+            jedisExecutor.execute(new JedisCallback<Object>() {
+                @Override
+                public Object execute(Jedis jedis) {
+                    return jedis.sadd(REDIS_SESSIONS_KEY, clusterId);
+                }
+            });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionIdManager] storeClusterId - redis exception", je);
+        }
     }
 
     @Override
     protected boolean hasClusterId(final String clusterId) {
-        return jedisExecutor.execute(new JedisCallback<Boolean>() {
-            @Override
-            public Boolean execute(Jedis jedis) {
-                return jedis.sismember(REDIS_SESSIONS_KEY, clusterId);
-            }
-        });
+        try {
+            return jedisExecutor.execute(new JedisCallback<Boolean>() {
+                @Override
+                public Boolean execute(Jedis jedis) {
+                    return jedis.sismember(REDIS_SESSIONS_KEY, clusterId);
+                }
+            });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionIdManager] storeClusterId - redis exception", je);
+            return false;
+        }
     }
 
     @Override
     protected List<String> scavenge(final List<String> clusterIds) {
-        deleteExpiredSessionIds();
-        List<String> expired = new LinkedList<String>();
-        List<Object> status = jedisExecutor.execute(new JedisCallback<List<Object>>() {
-            @Override
-            public List<Object> execute(Jedis jedis) {
-                Transaction t = jedis.multi();
-                for (String clusterId : clusterIds) {
-                    t.exists(REDIS_SESSION_KEY + clusterId);
+        try {
+            Set<String> activeIds = getActiveSessionIdsAndDeleteExpired();
+            List<String> expiredIds = new LinkedList<String>();
+            for (String clusterId : clusterIds) {
+                boolean active = activeIds.contains(clusterId);
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("[RedisSessionIdManager] clusterId: {}, active: {}", clusterId, active);
                 }
-                return t.exec();
+                if (!active) {
+                    expiredIds.add(clusterId);
+                }
             }
-        });
-        for (int i = 0; i < status.size(); i++) {
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("[RedisSessionIdManager] clusterId: {}, status: {}", clusterIds.get(i), status.get(i));
+            if (LOG.isDebugEnabled() && !expiredIds.isEmpty()) {
+                LOG.debug("[RedisSessionIdManager] Scavenger found {} sessions to expire: {}", expiredIds.size(),
+                        expiredIds);
             }
-            if (Boolean.FALSE.equals(status.get(i))) {
-                expired.add(clusterIds.get(i));
-            }
+            return expiredIds;
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionIdManager] storeClusterId - redis exception", je);
+            return Collections.emptyList();
         }
-        if (LOG.isDebugEnabled() && !expired.isEmpty()) {
-            LOG.debug("[RedisSessionIdManager] Scavenger found {} sessions to expire: {}", expired.size(), expired);
-        }
-        return expired;
     }
 
-    private void deleteExpiredSessionIds() {
+    private Set<String> getActiveSessionIdsAndDeleteExpired() {
         // 전체 sessionId 리스트를 얻어온다
         Set<String> sessionIdSet = jedisExecutor.execute(new JedisCallback<Set<String>>() {
             @Override
@@ -149,13 +162,16 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
             }
         });
         // session이 존재하지 않는 sessionId를 expiredSessionIds에 넣는다
+        final Set<String> activeSessionIds = new HashSet<String>();
         final List<String> expiredSessionIds = new ArrayList<String>();
         for (int i = 0; i < status.size(); i++) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("[RedisSessionIdManager] session status sessionId: {}, status: {}",
                         sessionIdList.get(i), status.get(i));
             }
-            if (Boolean.FALSE.equals(status.get(i))) {
+            if (Boolean.TRUE.equals(status.get(i))) {
+                activeSessionIds.add(sessionIdList.get(i));
+            } else {
                 expiredSessionIds.add(sessionIdList.get(i));
             }
         }
@@ -170,7 +186,7 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
                 @Override
                 public Long execute(Jedis jedis) {
                     // TODO Auto-generated method stub
-                    return jedis.srem(REDIS_SESSIONS_KEY, expiredSessionIds.toArray(new String[0]));
+                    return jedis.srem(REDIS_SESSIONS_KEY, expiredSessionIds.toArray(new String[expiredSessionIds.size()]));
                 }
             });
 
@@ -178,6 +194,7 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
                  LOG.debug("[RedisSessionIdManager] Deleted {} expired sessionIds", deleted);
             }
         }
+        return activeSessionIds;
     }
 
 }

@@ -23,6 +23,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.naming.InitialContext;
 import javax.servlet.http.HttpServletRequest;
@@ -37,6 +39,7 @@ import redis.clients.jedis.Transaction;
 import com.ovea.jetty.session.Serializer;
 import com.ovea.jetty.session.SessionManagerSkeleton;
 import com.ovea.jetty.session.serializer.XStreamSerializer;
+import redis.clients.jedis.exceptions.JedisException;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
@@ -73,6 +76,11 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     private final JedisExecutor jedisExecutor;
     private final Serializer serializer;
 
+    private final JedisExecutor jedisExecutorForLoadSession;
+    private final Semaphore jedisExecutorForLoadSessionAvailable = new Semaphore(1, true);
+    private final AtomicBoolean jedisExecutorForLoadSessionSet = new AtomicBoolean(false);
+
+
     private long staleIntervalSec = 10; // assume session to be fresh for 10 secs without refreshing from redis
     private long saveIntervalSec = 20; //only persist changes to session access times every 20 secs
     private boolean forceSaveAttributes = false; // when metadata updated, also updates session attributes
@@ -88,14 +96,22 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     public RedisSessionManager(JedisPool jedisPool, Serializer serializer) {
         this.serializer = serializer;
         this.jedisExecutor = new PooledJedisExecutor(jedisPool);
+        this.jedisExecutorForLoadSession = getJedisExecutorForLoadSession();
     }
 
     public RedisSessionManager(final String jndiName, Serializer serializer) {
         this.serializer = serializer;
-        this.jedisExecutor = new JedisExecutor() {
+        this.jedisExecutor = getLazyJedisExecutor(jndiName);
+        this.jedisExecutorForLoadSession = getJedisExecutorForLoadSession();
+    }
+
+    private JedisExecutor getLazyJedisExecutor(final String jndiName) {
+        if (jndiName == null || jndiName.trim().isEmpty()) {
+            throw new IllegalArgumentException();
+        }
+        return new JedisExecutor() {
             JedisExecutor delegate;
 
-            @Override
             public <V> V execute(JedisCallback<V> cb) {
                 if (delegate == null) {
                     try {
@@ -103,10 +119,28 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
                         JedisPool jedisPool = (JedisPool) ic.lookup(jndiName);
                         delegate = new PooledJedisExecutor(jedisPool);
                     } catch (Exception e) {
-                        throw new IllegalStateException("Unable to find instance of " + JedisExecutor.class.getName() + " in JNDI location " + jndiName + " : " + e.getMessage(), e);
+                        throw new IllegalStateException(
+                                "Unable to find instance of " + JedisExecutor.class.getName() + " in JNDI location "
+                                        + jndiName + " : " + e.getMessage(), e);
                     }
                 }
                 return delegate.execute(cb);
+            }
+        };
+    }
+
+    private JedisExecutor getJedisExecutorForLoadSession() {
+        if (jedisExecutor == null) {
+            throw new IllegalStateException();
+        }
+        return new JedisExecutor() {
+            public <V> V execute(JedisCallback<V> cb) {
+                jedisExecutorForLoadSessionAvailable.acquireUninterruptibly();
+                try {
+                    return jedisExecutor.execute(cb);
+                } finally {
+                    jedisExecutorForLoadSessionAvailable.release();
+                }
             }
         };
     }
@@ -121,6 +155,14 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
 
     public void setForceSaveAttributes(boolean forceSaveAttributes) {
         this.forceSaveAttributes = forceSaveAttributes;
+    }
+
+    public void setMaxConcurrentLoadSession(int maxConcurrentLoadSession) {
+        if (jedisExecutorForLoadSessionSet.compareAndSet(false, true)) {
+            jedisExecutorForLoadSessionAvailable.release(maxConcurrentLoadSession - 1);
+        } else {
+            throw new IllegalStateException();
+        }
     }
 
     @Override
@@ -146,13 +188,19 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     @Override
     protected RedisSession loadSession(final String clusterId) {
         LOG.debug("[RedisSessionManager] loadSession - loading session from Redis id={}", clusterId);
-        List<String> redisData = jedisExecutor.execute(new JedisCallback<List<String>>() {
-            @Override
-            public List<String> execute(Jedis jedis) {
-                final String key = RedisSessionIdManager.REDIS_SESSION_KEY + clusterId;
-                return jedis.hmget(key, FIELDS_TO_LOAD);
-            }
-        });
+        List<String> redisData;
+        try {
+            redisData = jedisExecutorForLoadSession.execute(new JedisCallback<List<String>>() {
+                @Override
+                public List<String> execute(Jedis jedis) {
+                    final String key = RedisSessionIdManager.REDIS_SESSION_KEY + clusterId;
+                    return jedis.hmget(key, FIELDS_TO_LOAD);
+                }
+            });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionManager] loadSession - redis exception", je);
+            return null;
+        }
         if (redisData.get(LOAD_IDX_ID) == null) {
             LOG.debug("[RedisSessionManager] loadSession - no session found in Redis for id={}", clusterId);
             return null;
@@ -179,24 +227,31 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         LOG.debug("[RedisSessionManager] reloadSession - reloading session from Redis id={}", clusterId);
         // XXX: redisData가 null이면 변함이 없어서 갱신할 필요가 없었다는 것을 의미하며
         // emptyList이면 저장된 세션이 없다는 것을 의미
-        List<String> redisData = jedisExecutor.execute(new JedisCallback<List<String>>() {
-            @Override
-            public List<String> execute(Jedis jedis) {
-                final String key = RedisSessionIdManager.REDIS_SESSION_KEY + clusterId;
-                String val = jedis.hget(key, "lastSaved");
-                if (val == null) {
-                    // no session in store
-                    return Collections.emptyList();
+        List<String> redisData;
+        try {
+            redisData = jedisExecutorForLoadSession.execute(new JedisCallback<List<String>>() {
+                @Override
+                public List<String> execute(Jedis jedis) {
+                    final String key = RedisSessionIdManager.REDIS_SESSION_KEY + clusterId;
+                    String val = jedis.hget(key, "lastSaved");
+                    if (val == null) {
+                        // no session in store
+                        return Collections.emptyList();
+                    }
+                    if (current.lastSaved != Long.parseLong(val)) {
+                        // session has changed - reload
+                        return jedis.hmget(key, FIELDS_TO_LOAD);
+                    } else {
+                        // session dit not changed in cache since last save
+                        return null;
+                    }
                 }
-                if (current.lastSaved != Long.parseLong(val)) {
-                    // session has changed - reload
-                    return jedis.hmget(key, FIELDS_TO_LOAD);
-                } else {
-                    // session dit not changed in cache since last save
-                    return null;
-                }
-            }
-        });
+            });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionManager] reloadSession - redis exception", je);
+            current.lastSynced = System.currentTimeMillis();
+            return current;
+        }
         if (redisData == null) {
             // 세션이 그동안 갱신되지 않은 경우 - current를 그대로 사용 가능하다.
             // redis와 메모리에 있는 세션을 일치시킨 시점을 기록한 후 sessionReloadNeeded()에서 판단하는데 사용
@@ -255,18 +310,22 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     private void saveSessionMap(final RedisSession session, final Map<String, String> map) {
         final String key = RedisSessionIdManager.REDIS_SESSION_KEY + session.getClusterId();
         final int ttl = session.getMaxInactiveInterval();
-        jedisExecutor.execute(new JedisCallback<Void>() {
-            @Override
-            public Void execute(Jedis jedis) {
-                Transaction t = jedis.multi();
-                t.hmset(key, map);
-                if (ttl > 0) {
-                    t.expire(key, ttl);
+        try {
+            jedisExecutor.execute(new JedisCallback<Void>() {
+                @Override
+                public Void execute(Jedis jedis) {
+                    Transaction t = jedis.multi();
+                    t.hmset(key, map);
+                    if (ttl > 0) {
+                        t.expire(key, ttl);
+                    }
+                    t.exec();
+                    return null;
                 }
-                t.exec();
-                return null;
-            }
-        });
+            });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionManager] saveSessionMap - redis exception", je);
+        }
     }
 
     @Override
@@ -306,12 +365,16 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     @Override
     protected void deleteSession(final RedisSession session) {
         LOG.debug("[RedisSessionManager] deleteSession - Deleting from Redis session id={}", session.getClusterId());
-        jedisExecutor.execute(new JedisCallback<Object>() {
-            @Override
-            public Object execute(Jedis jedis) {
-                return jedis.del(RedisSessionIdManager.REDIS_SESSION_KEY + session.getClusterId());
-            }
-        });
+        try {
+            jedisExecutor.execute(new JedisCallback<Object>() {
+                @Override
+                public Object execute(Jedis jedis) {
+                    return jedis.del(RedisSessionIdManager.REDIS_SESSION_KEY + session.getClusterId());
+                }
+            });
+        } catch (JedisException je) {
+            LOG.warn("[RedisSessionManager] deleteSession - redis exception", je);
+        }
     }
 
     final class RedisSession extends SessionManagerSkeleton<?>.SessionSkeleton {
