@@ -178,6 +178,10 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     }
     
     @Override
+    protected void shutdownSessions() throws Exception {
+    }
+
+    @Override
     protected boolean sessionReloadNeeded(RedisSession session) {
         // session이 sync된지 staleIntervalSec 만큼 지나지 않았으면 다시 redis에서 읽어올 필요가 없다
         // (staleIntervalSec 동안에는 session이 다른 서버로 옮겨갔다 돌아오지 않았다고 가정함)

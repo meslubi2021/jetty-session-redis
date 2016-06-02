@@ -23,8 +23,13 @@ import java.util.List;
 import java.util.Set;
 
 import javax.naming.InitialContext;
+import javax.servlet.http.HttpServletRequest;
 
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.SessionManager;
+import org.eclipse.jetty.server.handler.ContextHandler;
+import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
 
@@ -195,6 +200,24 @@ public final class RedisSessionIdManager extends SessionIdManagerSkeleton {
             }
         }
         return activeSessionIds;
+    }
+
+    @Override
+    public void renewSessionId(String oldClusterId, String oldNodeId, HttpServletRequest request) {
+        String newClusterId = newSessionId(request.hashCode());
+        removeSession(oldClusterId);
+        addSession(newClusterId);
+
+        Handler[] contexts = getServer().getChildHandlersByClass(ContextHandler.class);
+        for (int i = 0; contexts != null && i < contexts.length; i++) {
+            SessionHandler sessionHandler = ((ContextHandler) contexts[i]).getChildHandlerByClass(SessionHandler.class);
+            if (sessionHandler != null) {
+                SessionManager manager = sessionHandler.getSessionManager();
+                if (manager != null && manager instanceof RedisSessionManager) {
+                    manager.renewSessionId(oldClusterId, oldNodeId, newClusterId, getNodeId(newClusterId, request));
+                }
+            }
+        }
     }
 
 }

@@ -140,7 +140,12 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
 
     @Override
     public final void addSession(HttpSession session) {
-        String clusterId = getClusterId(session.getId());
+        String sessionId = session.getId();
+        String clusterId = getClusterId(sessionId);
+        addSession(clusterId);
+    }
+
+    protected void addSession(String clusterId) {
         storeClusterId(clusterId);
         sessions.add(clusterId);
     }
@@ -204,4 +209,9 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
     private interface SessionManagerCallback {
         void execute(SessionManagerSkeleton<?> sessionManager);
     }
+
+    public Server getServer() {
+        return server;
+    }
+
 }

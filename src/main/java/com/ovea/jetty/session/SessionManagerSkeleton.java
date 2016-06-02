@@ -17,6 +17,7 @@ package com.ovea.jetty.session;
 
 import org.eclipse.jetty.server.session.AbstractSession;
 import org.eclipse.jetty.server.session.AbstractSessionManager;
+import org.eclipse.jetty.server.session.MemSession;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
 
@@ -75,7 +76,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
     }
 
     @Override
-    public final void removeSession(AbstractSession sess, boolean invalidate) {
+    public final boolean removeSession(AbstractSession sess, boolean invalidate) {
         @SuppressWarnings({"unchecked"}) T session = (T) sess;
         String clusterId = getClusterId(session);
         boolean removed = removeSession(clusterId);
@@ -95,6 +96,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
                 session.willPassivate();
             }
         }
+        return removed;
     }
 
     @Override
@@ -174,16 +176,6 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
     
     protected abstract boolean sessionReloadNeeded(T session);
 
-    @Override
-    protected final void invalidateSessions() {
-        //Do nothing - we don't want to remove and
-        //invalidate all the sessions because this
-        //method is called from doStop(), and just
-        //because this context is stopping does not
-        //mean that we should remove the session from
-        //any other nodes
-    }
-
     final void invalidateSession(String clusterId) {
         AbstractSession session = sessions.get(clusterId);
         if (session != null)
@@ -239,7 +231,7 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
 
     protected abstract T reloadSession(String clusterId, T current);
 
-    public abstract class SessionSkeleton extends AbstractSession {
+    public class SessionSkeleton extends MemSession {
 
         /* 세션 쿠키가 세트된 시각. AbstractSession._cookieSet 값을 수정할 수 없기 때문에 (private, no setter)
            여기서 다시 선언한다음 사용한다. 밀리초(ms) 단위. */
@@ -272,7 +264,8 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             }
         }
 
-        protected void setCookieSetTime(long time) {
+        @Override
+        public void setCookieSetTime(long time) {
             cookieSet = time;
         }
     }
