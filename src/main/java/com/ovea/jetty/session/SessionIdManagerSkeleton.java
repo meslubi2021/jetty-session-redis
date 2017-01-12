@@ -84,17 +84,21 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
             scavenger = executorService.scheduleWithFixedDelay(new Runnable() {
                 @Override
                 public void run() {
+                    LOG.debug("Running scavenger thread");
                     if (!sessions.isEmpty()) {
                         try {
                             final List<String> expired = scavenge(new ArrayList<String>(sessions));
                             for (String clusterId : expired)
                                 sessions.remove(clusterId);
+                            /* This leads to expiring valid sessions in cluster mode for some reasons.
+                               This is not required for redis anyways since these keys expire by TTL
                             forEachSessionManager(new SessionManagerCallback() {
                                 @Override
                                 public void execute(SessionManagerSkeleton<?> sessionManager) {
                                     sessionManager.expire(expired);
                                 }
                             });
+                            */
                         } catch (Exception e) {
                             LOG.warn("Scavenger thread failure: " + e.getMessage(), e);
                         }
