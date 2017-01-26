@@ -37,6 +37,7 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.Transaction;
 
 import com.ovea.jetty.session.Serializer;
+import com.ovea.jetty.session.SerializerException;
 import com.ovea.jetty.session.SessionManagerSkeleton;
 import com.ovea.jetty.session.serializer.XStreamSerializer;
 import redis.clients.jedis.exceptions.JedisException;
@@ -211,8 +212,15 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         }
         String attrs = redisData.get(LOAD_IDX_ATTRIBUTES);
         //noinspection unchecked
-        RedisSession loaded = new RedisSession(redisData, attrs == null ? new HashMap<String, Object>() :
-                serializer.deserialize(attrs, Map.class));
+        RedisSession loaded;
+        try {
+            loaded = new RedisSession(redisData, attrs == null ? new HashMap<String, Object>() :
+                    serializer.deserialize(attrs, Map.class));
+        } catch (SerializerException se) {
+            LOG.warn("[RedisSessionManager] loadSession - Unable to deserialize because of class version mismatch");
+            sessionIdManager.removeSession(clusterId);
+            return null;
+        }
         long now = System.currentTimeMillis();
         //if the session in the database has not already expired
         if (loaded.expiryTime <= 0 || loaded.expiryTime * 1000 > now) {
