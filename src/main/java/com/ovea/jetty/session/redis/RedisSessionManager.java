@@ -277,8 +277,15 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
         }
         String attrs = redisData.get(LOAD_IDX_ATTRIBUTES);
         //noinspection unchecked
-        RedisSession reloaded = new RedisSession(redisData, attrs == null ? new HashMap<String, Object>() :
-                serializer.deserialize(attrs, Map.class));
+        RedisSession reloaded;
+        try {
+            reloaded = new RedisSession(redisData, attrs == null ? new HashMap<String, Object>() :
+                    serializer.deserialize(attrs, Map.class));
+        } catch (SerializerException se) {
+            LOG.warn("[RedisSessionManager] reloadSession - Unable to deserialize because of class version mismatch");
+            return null;
+        }
+
         long now = System.currentTimeMillis();
         if (reloaded.expiryTime <= 0 || reloaded.expiryTime * 1000 > now) {
             //if the session in the database has not already expired
