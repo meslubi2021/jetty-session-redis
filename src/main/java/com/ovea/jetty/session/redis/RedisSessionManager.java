@@ -39,7 +39,7 @@ import redis.clients.jedis.Transaction;
 import com.ovea.jetty.session.Serializer;
 import com.ovea.jetty.session.SerializerException;
 import com.ovea.jetty.session.SessionManagerSkeleton;
-import com.ovea.jetty.session.serializer.XStreamSerializer;
+import com.ovea.jetty.session.serializer.JsonSerializer;
 import redis.clients.jedis.exceptions.JedisException;
 
 /**
@@ -87,11 +87,11 @@ public final class RedisSessionManager extends SessionManagerSkeleton<RedisSessi
     private boolean forceSaveAttributes = false; // when metadata updated, also updates session attributes
 
     public RedisSessionManager(JedisPool jedisPool) {
-        this(jedisPool, new XStreamSerializer());
+        this(jedisPool, new JsonSerializer());
     }
 
     public RedisSessionManager(String jndiName) {
-        this(jndiName, new XStreamSerializer());
+        this(jndiName, new JsonSerializer());
     }
 
     public RedisSessionManager(JedisPool jedisPool, Serializer serializer) {
