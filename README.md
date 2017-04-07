@@ -1,4 +1,4 @@
-# Jetty session clustering with REDIS
+# Jetty session clustering with Redis
 
 ## Build instruction:
 
@@ -7,19 +7,14 @@
     mvn package
 
 
-
 ## Controlling session serialization
 
-By default, session attributes are serialized using XStream, but this is clearly the worst serializer and you must make sure that you configure the serializer according to your needs.
-If you have small sessions with simple types, consider the <strong>JsonSerializer</strong>. If you have complexe objects but all serializable, you can consider the <strong>JbossSerializer</strong>.
-You can also create your own ones byt implementing the <strong>Serializer</strong> class of a provided skeleton (<a href="https://github.com/Ovea/jetty-session-redis/tree/master/src/main/java/com/ovea/jetty/session/serializer">see examples here</a>).
+By default, session attributes are serialized using `JsonSerializer`. It is appropriate if you have small sessions with simple types. For more complicated sessions, use other forks with the `JBossSerializer`.
+You can also create your own ones by implementing the <strong>Serializer</strong> class of a provided skeleton (<a href="https://github.com/dbaq/jetty-session-redis/tree/master/src/main/java/com/ovea/jetty/session/serializer">see examples here</a>).
 
 Here is the list of provided Serializer:
 
 * com.ovea.jetty.session.serializer.JsonSerializer
-* com.ovea.jetty.session.serializer.JdkSerializer
-* com.ovea.jetty.session.serializer.XStreamSerializer
-* com.ovea.jetty.session.serializer.JBossSerializer
 
 
 ## Debugging
