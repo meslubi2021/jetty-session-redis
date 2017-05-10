@@ -264,7 +264,6 @@ public abstract class SessionManagerSkeleton<T extends SessionManagerSkeleton<?>
             }
         }
 
-        @Override
         public void setCookieSetTime(long time) {
             cookieSet = time;
         }

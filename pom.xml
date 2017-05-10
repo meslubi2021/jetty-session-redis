@@ -24,8 +24,7 @@
         <dependency>
             <groupId>org.eclipse.jetty.aggregate</groupId>
             <artifactId>jetty-all</artifactId>
-            <version>9.2.10.v20150310</version>
-            <type>pom</type>
+            <version>9.2.14.v20151106</version>
         </dependency>
 
         <!-- jetty classes + runner + jsp stack -->
