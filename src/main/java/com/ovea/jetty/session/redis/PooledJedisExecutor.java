@@ -15,14 +15,18 @@
  */
 package com.ovea.jetty.session.redis;
 
+import org.eclipse.jetty.util.log.Log;
+import org.eclipse.jetty.util.log.Logger;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
-import redis.clients.jedis.exceptions.JedisException;
 
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
  */
 class PooledJedisExecutor implements JedisExecutor {
+
+    private final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
+
     private final JedisPool jedisPool;
 
     PooledJedisExecutor(JedisPool jedisPool) {
@@ -31,14 +35,17 @@ class PooledJedisExecutor implements JedisExecutor {
 
     @Override
     public <V> V execute(JedisCallback<V> cb) {
-        Jedis jedis = jedisPool.getResource();
+        Jedis jedis = null;
         try {
+            jedis = jedisPool.getResource();
             return cb.execute(jedis);
-        } catch (JedisException e) {
-            jedisPool.returnBrokenResource(jedis);
+        } catch (RuntimeException e) {
+            LOG.warn("exeception raised inside jedisCallback: ", e);
             throw e;
         } finally {
-            jedisPool.returnResource(jedis);
+            if (jedis != null) {
+                jedis.close();
+            }
         }
     }
 

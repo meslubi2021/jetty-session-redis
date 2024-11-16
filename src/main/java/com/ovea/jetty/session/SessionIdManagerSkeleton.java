@@ -15,6 +15,20 @@
  */
 package com.ovea.jetty.session;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpSession;
+
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.SessionManager;
@@ -24,20 +38,14 @@ import org.eclipse.jetty.server.session.SessionHandler;
 import org.eclipse.jetty.util.log.Log;
 import org.eclipse.jetty.util.log.Logger;
 
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpSession;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.*;
-
 /**
  * @author Mathieu Carbou (mathieu.carbou@gmail.com)
  */
 public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager {
 
-    final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
+    private final static Logger LOG = Log.getLogger("com.ovea.jetty.session");
     // for a session id in the whole jetty, each webapp can have different sessions for the same id
-    private final ConcurrentMap<String, Object> sessions = new ConcurrentHashMap<String, Object>();
+    private final Set<String> sessions = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     private final Server server;
 
@@ -76,17 +84,21 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
             scavenger = executorService.scheduleWithFixedDelay(new Runnable() {
                 @Override
                 public void run() {
+                    LOG.debug("Running scavenger thread");
                     if (!sessions.isEmpty()) {
                         try {
-                            final List<String> expired = scavenge(new ArrayList<String>(sessions.keySet()));
+                            final List<String> expired = scavenge(new ArrayList<String>(sessions));
                             for (String clusterId : expired)
                                 sessions.remove(clusterId);
+                            /* This leads to expiring valid sessions in cluster mode for some reasons.
+                               This is not required for redis anyways since these keys expire by TTL
                             forEachSessionManager(new SessionManagerCallback() {
                                 @Override
-                                public void execute(SessionManagerSkeleton sessionManager) {
+                                public void execute(SessionManagerSkeleton<?> sessionManager) {
                                     sessionManager.expire(expired);
                                 }
                             });
+                            */
                         } catch (Exception e) {
                             LOG.warn("Scavenger thread failure: " + e.getMessage(), e);
                         }
@@ -127,37 +139,52 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
     @Override
     public final boolean idInUse(String id) {
         String cid = getClusterId(id);
-        return id != null && (sessions.containsKey(cid) || hasClusterId(cid));
+        return id != null && (sessions.contains(cid) || hasClusterId(cid));
     }
 
     @Override
     public final void addSession(HttpSession session) {
-        String clusterId = getClusterId(session.getId());
+        String sessionId = session.getId();
+        String clusterId = getClusterId(sessionId);
+        addSession(clusterId);
+    }
+
+    protected void addSession(String clusterId) {
         storeClusterId(clusterId);
-        sessions.putIfAbsent(clusterId, Void.class);
+        sessions.add(clusterId);
     }
 
     @Override
     public final void removeSession(HttpSession session) {
+        if (session == null) {
+            return;
+        }
         String clusterId = getClusterId(session.getId());
-        if (sessions.containsKey(clusterId)) {
+        removeSession(clusterId);
+    }
+
+    public void removeSession (String clusterId) {
+        if (clusterId == null)
+            return;
+
+        LOG.debug("Removing session clusterId={}", clusterId);
+        try {
             sessions.remove(clusterId);
             deleteClusterId(clusterId);
+        } catch (Exception e) {
+            LOG.warn("Problem removing session clusterId=" + clusterId, e);
         }
     }
 
     @Override
     public final void invalidateAll(final String clusterId) {
-        if (sessions.containsKey(clusterId)) {
-            sessions.remove(clusterId);
-            deleteClusterId(clusterId);
-            forEachSessionManager(new SessionManagerCallback() {
-                @Override
-                public void execute(SessionManagerSkeleton sessionManager) {
-                    sessionManager.invalidateSession(clusterId);
-                }
-            });
-        }
+        removeSession(clusterId);
+        forEachSessionManager(new SessionManagerCallback() {
+            @Override
+            public void execute(SessionManagerSkeleton<?> sessionManager) {
+                sessionManager.invalidateSession(clusterId);
+            }
+        });
     }
 
     protected abstract void deleteClusterId(String clusterId);
@@ -175,7 +202,7 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
             if (sessionHandler != null) {
                 SessionManager manager = sessionHandler.getSessionManager();
                 if (manager != null && manager instanceof SessionManagerSkeleton)
-                    callback.execute((SessionManagerSkeleton) manager);
+                    callback.execute((SessionManagerSkeleton<?>) manager);
             }
         }
     }
@@ -183,7 +210,12 @@ public abstract class SessionIdManagerSkeleton extends AbstractSessionIdManager 
     /**
      * @author Mathieu Carbou (mathieu.carbou@gmail.com)
      */
-    private static interface SessionManagerCallback {
-        void execute(SessionManagerSkeleton sessionManager);
+    private interface SessionManagerCallback {
+        void execute(SessionManagerSkeleton<?> sessionManager);
     }
+
+    public Server getServer() {
+        return server;
+    }
+
 }
